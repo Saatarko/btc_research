@@ -22,7 +22,8 @@ import time
 
 def get_prediction_report():
     def get_btc_and_append_csv(filename='btc_data_15m.csv', return_days=7):
-        exchange = ccxt.binance()
+        # exchange = ccxt.binance()
+        exchange = ccxt.okx()
         symbol = 'BTC/USDT'
         timeframe = '15m'
         limit = 1000
