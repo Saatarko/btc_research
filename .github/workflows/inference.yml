@@ -2,7 +2,7 @@ name: BTC Inference
 
 on:
   schedule:
-    - cron: '2,17,32,47 * * * *'  # Каждые 15 минут с задержкой в 1 минуту
+    - cron: '2,17,32,47 * * * *'  # Каждые 15 минут с 1-минутной задержкой
   workflow_dispatch:
 
 jobs:
@@ -13,7 +13,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
-          persist-credentials: true  # <--- используем GITHUB_TOKEN
+          persist-credentials: true  # важно для GITHUB_TOKEN
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -34,13 +34,10 @@ jobs:
       - name: Run inference
         run: python inference.py
 
-      - name: Commit and push updated prediction logs
-        env:
-          PAT_TOKEN: ${{ secrets.PAT_TOKEN }}
+      - name: Commit and push updated CSV logs
         run: |
-          git config --global user.name "btc-inference-bot"
-          git config --global user.email "bot@example.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add btc_model_predictions.csv btc_rl_inference_log.csv
           git commit -m "Auto-update inference logs [skip ci]" || echo "No changes to commit"
-          git push https://x-access-token:${PAT_TOKEN}@github.com/Saatarko/btc_research.git HEAD:refs/heads/main
-
+          git push
