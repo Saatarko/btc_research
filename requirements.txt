@@ -1,0 +1,14 @@
+gradio
+ccxt
+joblib
+numpy
+pandas
+ta
+torch
+pykalman
+scikit-learn
+torch
+scikit-learn
+stable-baselines3
+gymnasium
+lightning
