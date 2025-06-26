@@ -1,0 +1,45 @@
+name: BTC Inference
+
+on:
+  schedule:
+    - cron: '2,17,32,47 * * * *'  # Каждые 15 минут с задержкой в 1 минуту
+  workflow_dispatch:
+
+jobs:
+  inference:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          persist-credentials: true  # <--- используем GITHUB_TOKEN
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run inference
+        run: python inference.py
+
+      - name: Commit and push updated prediction logs
+        run: |
+          git config --global user.name "btc-inference-bot"
+          git config --global user.email "bot@example.com"
+          git add btc_model_predictions.csv btc_rl_inference_log.csv
+          git commit -m "Auto-update inference logs [skip ci]" || echo "No changes to commit"
+          git push origin HEAD:${{ github.ref }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
