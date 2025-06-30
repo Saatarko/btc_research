@@ -453,8 +453,8 @@ def get_prediction_report():
     TRANSFORMER_PATH = "transformer_binary_15min.pt"
     SCALER_PATH = "scaler_ttf.save"
     TRANSFORMER_LOG = "btc_model_predictions.csv"
-    RL_LOG = "btc_rl_inference_log.csv"
-    RL_MODEL_PATH = "ppo_btc_trading"
+    RL_LOG = "btc_rl_inference_log_v2.csv"
+    RL_MODEL_PATH = "ppo_btc_trading_v11"
 
     # --- Загрузка данных и признаков ---
     df_new = get_btc_and_append_csv()
@@ -506,6 +506,9 @@ def get_prediction_report():
     obs, _ = env.reset()
     rl_model = PPO.load(RL_MODEL_PATH, env=env)
     action, _ = rl_model.predict(obs, deterministic=True)
+    obs_before = obs.copy()
+    obs, reward, done, _, info = env.step(action)
+    next_obs = obs.copy()
 
     # --- Обновление предыдущей строки (для обоих логов) ---
     def update_previous_row(csv_path, close_price, open_price):
@@ -544,9 +547,14 @@ def get_prediction_report():
     rl_row = {
         "timestamp": prediction_timestamp,
         "action": int(action),
-        "probability": prob,  # или свой prob если считаешь RL отдельно
-        "price": None,
-        "real_class": None
+        "reward": float(reward),
+        "done": done,
+        "obs": obs_before.tolist(),
+        "next_obs": next_obs.tolist(),
+        "real_price": df_model_rl["Close"].iloc[-1],
+        "entry_price": info.get("entry_price", None),
+        "unrealized_profit": info.get("unrealized_profit", None),
+        "position_before": info.get("position", 0),  # до step()
     }
     try:
         rl_df = pd.read_csv(RL_LOG, parse_dates=["timestamp"])
