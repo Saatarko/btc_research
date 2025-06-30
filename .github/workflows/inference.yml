@@ -38,7 +38,7 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add btc_model_predictions.csv btc_rl_inference_log.csv
+          git add btc_model_predictions.csv btc_rl_inference_log_v2.csv
           git commit -m "Auto-update inference logs [skip ci]" || echo "No changes to commit"
 
       - name: Push changes
