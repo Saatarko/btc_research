@@ -1,4 +1,8 @@
 import warnings
+from collections import deque
+
+from stable_baselines3.common.policies import ActorCriticPolicy
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -142,16 +146,36 @@ def get_prediction_report():
             return torch.optim.Adam(self.parameters(), lr=self.lr)
 
     class BTCTradingEnv(gym.Env):
-        def __init__(self, df: pd.DataFrame, state_columns: list,
-                     initial_balance=10_000, trade_penalty=0.0, max_steps=None,
-                     reward_scaling=100.0, use_log_return=True, use_sharpe_bonus=True,
-                     holding_penalty=0.001, sharpe_bonus_weight=0.1):
+        def __init__(self, df, state_columns,
+                     initial_balance=10_000,
+                     trade_penalty=0.01,
+                     max_steps=None,
+                     reward_scaling=100.0,
+                     use_log_return=False,
+                     use_sharpe_bonus=False,
+                     holding_penalty=0.005,
+                     sharpe_bonus_weight=0.5,
+                     commission=0.001,
+                     spread=0.0005,
+                     slippage_std=0.001,
+                     min_holding_period=8,
+                     window_size=672):
+
             super().__init__()
             self.df = df.reset_index(drop=True)
             self.state_columns = state_columns
-            self.action_space = gym.spaces.Discrete(3)
+            self.window_size = window_size
+
+            self.commission = commission
+            self.spread = spread
+            self.slippage_std = slippage_std
+            self.min_holding_period = min_holding_period
+
+            self.action_space = gym.spaces.Discrete(3)  # 0: hold, 1: buy, 2: sell
             self.observation_space = gym.spaces.Box(
-                low=-np.inf, high=np.inf, shape=(len(state_columns),), dtype=np.float32
+                low=-np.inf, high=np.inf,
+                shape=(window_size, len(state_columns)),
+                dtype=np.float32
             )
 
             self.initial_balance = initial_balance
@@ -164,24 +188,28 @@ def get_prediction_report():
             self.holding_penalty = holding_penalty
             self.sharpe_bonus_weight = sharpe_bonus_weight
 
+            self.all_trades_info = []
+            self.episode_trades_info = []
+
             self.reset()
 
-        def _next_observation(self):
-            return self.df.iloc[self.current_step][self.state_columns].astype(np.float32).values
+        def _get_execution_price(self, price, action):
+            if action == 1:
+                exec_price = price * (1 + self.spread)
+            elif action == 2:
+                exec_price = price * (1 - self.spread)
+            else:
+                exec_price = price
 
-        def reset(self, *, seed=None, options=None):
-            self.current_step = 0
-            self.balance = self.initial_balance
-            self.position = 0
-            self.entry_price = 0.0
-            self.total_profit = 0.0
-            self.trades = []
-            self.trades_info = []
-            self.entry_step = None
-            self.total_reward = 0.0
-            self.equity_curve = [self.balance]
-            self.all_trades_info = []
-            return self._next_observation(), {}
+            slippage = np.random.normal(0, self.slippage_std)
+            exec_price *= (1 + slippage)
+            return max(exec_price, 0.0001)
+
+        def _next_observation(self):
+            obs = self.df.iloc[self.current_step][self.state_columns].astype(np.float32).values
+            obs = np.nan_to_num(obs)
+            self.state_window.append(obs)
+            return np.array(self.state_window)
 
         def _calculate_equity(self, current_price):
             if self.position == 1:
@@ -196,94 +224,143 @@ def get_prediction_report():
             drawdowns = (equity - cumulative_max) / cumulative_max
             return drawdowns.min()
 
+        def reset(self, *, seed=None, options=None):
+            self.current_step = self.window_size
+            self.balance = self.initial_balance
+            self.position = 0
+            self.entry_price = 0.0
+            self.entry_step = None
+            self.total_reward = 0.0
+            self.trades = []
+            self.trades_info = []
+            self.equity_curve = [self.balance]
+            self.episode_trades_info = []
+            self.actions_log = []
+            self.state_window = deque(maxlen=self.window_size)
+
+            for i in range(self.current_step - self.window_size, self.current_step):
+                obs = self.df.iloc[i][self.state_columns].astype(np.float32).values
+                self.state_window.append(np.nan_to_num(obs))
+
+            return self._next_observation(), {}
+
         def step(self, action):
             done = False
             reward = 0.0
-            current_price = self.df.loc[self.current_step, 'Close']
 
-            # === Покупка ===
+            market_price = self.df.loc[self.current_step, 'Close']
+            if np.isnan(market_price) or market_price <= 0:
+                market_price = 1.0
+
+            max_holding_period = 96
+            if self.position == 1 and (self.current_step - self.entry_step) >= max_holding_period:
+                action = 2  # форсированная продажа
+
+            exec_price = self._get_execution_price(market_price, action)
+
+            # --- BUY ---
             if action == 1 and self.position == 0:
+                commission_cost = exec_price * self.commission
+                reward += 0.1
                 self.position = 1
-                self.entry_price = current_price
+                self.entry_price = exec_price + commission_cost
                 self.entry_step = self.current_step
+                self.balance -= commission_cost
 
-            # === Продажа ===
+            # --- SELL ---
             elif action == 2 and self.position == 1:
-                if self.use_log_return:
-                    price_change = np.log(current_price / self.entry_price)
-                else:
-                    price_change = current_price - self.entry_price
-
+                commission_cost = exec_price * self.commission
+                price_change = (exec_price - self.entry_price) / self.entry_price
                 holding_duration = self.current_step - self.entry_step
-                holding_penalty = self.holding_penalty * holding_duration
+                reward = price_change - self.commission * 2
 
-                reward = price_change - holding_penalty
-                self.balance += reward
+                if holding_duration < self.min_holding_period:
+                    reward -= 0.1
+                if reward > 0:
+                    reward += 0.2
 
-                self.trades.append(price_change)
-                self.trades_info.append({
+                self.balance += price_change * self.entry_price
+                self.balance -= commission_cost
+
+                trade_info = {
                     "entry_step": self.entry_step,
                     "exit_step": self.current_step,
-                    "profit": price_change,
-                    "holding": holding_duration
-                })
+                    "profit": price_change - self.commission * 2,
+                    "holding": holding_duration,
+                    "entry_price": self.entry_price,
+                    "exit_price": exec_price
+                }
+                self.trades.append(price_change - self.commission * 2)
+                self.episode_trades_info.append(trade_info)
+                self.all_trades_info.append(trade_info)
 
                 self.position = 0
                 self.entry_price = 0.0
                 self.entry_step = None
 
-            # === Штраф за невалидное действие (например, продажа без позиции) ===
-            elif action != 0:
-                reward -= self.trade_penalty
+            # --- Bad actions ---
+            elif action == 2 and self.position == 0:
+                reward -= 0.005
+            elif action == 1 and self.position == 1:
+                reward -= 0.005
 
-            # === Масштабируем награду и обновляем total_reward ===
-            reward *= self.reward_scaling
+            # --- HOLD ---
+            elif action == 0:
+                if self.position == 1:
+                    # Нереализованная прибыль (награждаем за выгодные удержания)
+                    unrealized = (market_price - self.entry_price) / self.entry_price
+                    reward += unrealized * 0.1
+
+                    # Штраф за слишком долгий холд
+                    holding_duration = self.current_step - self.entry_step
+                    if holding_duration > self.min_holding_period:
+                        reward -= self.holding_penalty * max(0, holding_duration - self.min_holding_period)
+                else:
+                    # Находимся вне позиции и просто холдим — штрафуем слегка
+                    reward -= 0.001
+
+            reward = np.clip(reward, -100.0, 100.0)
+            if np.isnan(reward) or np.isinf(reward):
+                reward = 0.0
+
             self.total_reward += reward
-
-            # === Equity ===
-            equity = self._calculate_equity(current_price)
+            equity = self._calculate_equity(market_price)
             self.equity_curve.append(equity)
 
-            # === Шаг вперёд ===
             self.current_step += 1
             done = self.current_step >= self.max_steps
 
-            # === Принудительно закрываем позицию, если эпизод завершился ===
+            # --- Force close if still holding ---
             if done and self.position == 1:
-                if self.use_log_return:
-                    price_change = np.log(current_price / self.entry_price)
-                else:
-                    price_change = current_price - self.entry_price
+                exec_price = self._get_execution_price(market_price, 2)
+                commission_cost = exec_price * self.commission
+                final_price_change = (exec_price - self.entry_price) / self.entry_price - self.commission * 2
+                final_reward = final_price_change
 
-                holding_duration = self.current_step - self.entry_step
-                holding_penalty = self.holding_penalty * holding_duration
+                self.balance += final_price_change * self.entry_price
+                self.balance -= commission_cost
 
-                final_reward = price_change - holding_penalty
-                self.balance += final_reward
-
-                self.trades.append(price_change)
-                self.trades_info.append({
+                trade_info = {
                     "entry_step": self.entry_step,
                     "exit_step": self.current_step,
-                    "profit": price_change,
-                    "holding": holding_duration
-                })
-
-                self.position = 0
-                self.entry_price = 0.0
-                self.entry_step = None
-
+                    "profit": final_price_change,
+                    "holding": self.current_step - self.entry_step,
+                    "entry_price": self.entry_price,
+                    "exit_price": exec_price
+                }
+                self.trades.append(final_price_change)
+                self.episode_trades_info.append(trade_info)
+                self.all_trades_info.append(trade_info)
                 self.total_reward += final_reward * self.reward_scaling
+                self.position = 0
 
-            # === Sharpe бонус ===
+            # --- Sharpe Bonus ---
             if done and self.use_sharpe_bonus and len(self.trades) > 1:
                 sharpe = np.mean(self.trades) / (np.std(self.trades) + 1e-8)
                 reward += self.sharpe_bonus_weight * sharpe
 
-            # === Обновляем список всех сделок (на каждом шаге) ===
-            self.all_trades_info = self.trades_info.copy()
+            self.actions_log.append(action)
 
-            # === Выдаём наблюдение и информацию ===
             obs = self._next_observation()
             info = {
                 'balance': self.balance,
@@ -292,20 +369,71 @@ def get_prediction_report():
                 'step': self.current_step,
                 'reward': reward,
                 'drawdown': self._calculate_max_drawdown(),
-                'total_profit': np.sum(self.trades)
+                'total_profit': np.sum(self.trades),
+                'recent_trade': self.episode_trades_info[-1] if self.episode_trades_info else None,
+                'combined_signal': self.df.loc[
+                    self.current_step, 'combined_signal'] if 'combined_signal' in self.df.columns else None,
+                'rsi': self.df.loc[self.current_step, 'rsi'] if 'rsi' in self.df.columns else None,
+                'macd': self.df.loc[self.current_step, 'macd'] if 'macd' in self.df.columns else None,
+                'volume_spike': self.df.loc[
+                    self.current_step, 'volume_spike'] if 'volume_spike' in self.df.columns else None,
+                'candle_cluster': self.df.loc[
+                    self.current_step, 'candle_cluster'] if 'candle_cluster' in self.df.columns else None,
+                'entry_price': self.entry_price if self.position == 1 else None,
+                'unrealized_profit': (
+                            (market_price - self.entry_price) / self.entry_price) if self.position == 1 else 0.0,
+                'holding_duration': (self.current_step - self.entry_step) if self.position == 1 else 0,
+                'actions_log': self.actions_log[-100:]  # последние действия
             }
 
             return obs, reward, done, False, info
 
-        def render(self, mode='human', trades=False):
-            print(f"Step: {self.current_step}, Position: {self.position}, Balance: {self.balance:.2f}, "
-                  f"Total reward: {self.total_reward:.2f}, Max DD: {self._calculate_max_drawdown():.4f}")
-            if trades and self.trades_info:
-                print("Trades:")
-                for trade in self.trades_info:
-                    print(f"  Entry: {trade['entry_step']}, Exit: {trade['exit_step']}, "
-                          f"Profit: {trade['profit']:.4f}, Holding: {trade['holding']} steps")
+    class TransformerFeatureExtractor(BaseFeaturesExtractor):
+        def __init__(self, observation_space, d_model=64, nhead=4, num_layers=2, dropout=0.1):
+            # Определим размеры входа
+            seq_len, feature_dim = observation_space.shape  # (window_size, num_features)
 
+            super().__init__(observation_space, features_dim=d_model)
+
+            self.seq_len = seq_len
+            self.feature_dim = feature_dim
+
+            # Линейный слой для увеличения размерности признаков до d_model
+            self.input_proj = nn.Linear(feature_dim, d_model)
+
+            self.norm = nn.LayerNorm(d_model)
+
+            # Трансформер-энкодер
+            encoder_layer = nn.TransformerEncoderLayer(d_model=d_model, nhead=nhead, dropout=dropout, batch_first=True)
+            self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+            # Агрегация выходов трансформера (например, берём последний токен)
+            self.pool = nn.AdaptiveAvgPool1d(1)
+
+        def forward(self, x: torch.Tensor) -> torch.Tensor:
+            # x: (batch_size, seq_len, feature_dim)
+            x = self.input_proj(x)  # -> (batch_size, seq_len, d_model)
+            x = self.norm(x)  # 👈 после линейного слоя
+            x = self.transformer_encoder(x)  # -> (batch_size, seq_len, d_model)
+
+            # Берём среднее по временной оси: (batch_size, d_model)
+            x = x.mean(dim=1)
+            return x
+
+    class TransformerPolicy(ActorCriticPolicy):
+        def __init__(self, observation_space, action_space, lr_schedule,
+                     net_arch=None, activation_fn=nn.Tanh, **kwargs):
+            # Заменим feature_extractor на наш TransformerFeatureExtractor
+            super().__init__(
+                observation_space,
+                action_space,
+                lr_schedule,
+                features_extractor_class=TransformerFeatureExtractor,
+                features_extractor_kwargs=dict(d_model=64, nhead=4, num_layers=2),
+                net_arch=[dict(pi=[64], vf=[64])],
+                activation_fn=activation_fn,
+                **kwargs
+            )
     def compute_indicators_v6(df, trend_emd=None, future_horizon=5, threshold=0.02, kalman_smooth=False):
         if kalman_smooth:
 
@@ -507,8 +635,15 @@ def get_prediction_report():
     rl_model = PPO.load(RL_MODEL_PATH, env=env)
     action, _ = rl_model.predict(obs, deterministic=True)
     obs_before = obs.copy()
-    obs, reward, done, _, info = env.step(action)
-    next_obs = obs.copy()
+    try:
+        obs, reward, done, _, info = env.step(action)
+        next_obs = obs.copy()
+    except IndexError:
+        print("⚠️  Достигнут конец df, step() невозможен.")
+        reward = 0.0
+        done = True
+        info = {"error": "IndexError on step()"}
+        next_obs = obs_before.copy()
 
     # --- Обновление предыдущей строки (для обоих логов) ---
     def update_previous_row(csv_path, close_price, open_price):
