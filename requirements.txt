@@ -11,5 +11,6 @@ torch
 scikit-learn
 stable-baselines3
 gymnasium
-lightning
-googleapiclient
+gymnasium
+lightning==2.2.0
+google-api-python-client
