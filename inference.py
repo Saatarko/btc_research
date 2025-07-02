@@ -53,15 +53,23 @@ def download_csv(file_id, local_path='temp.csv'):
     return local_path
 
 
-def upload_file_to_drive(filename, mimetype='text/csv'):
-    file_metadata = {
-        'name': filename,
-    }
+def upload_file_by_id(file_id, filename, mimetype='text/csv'):
     media = MediaFileUpload(filename, mimetype=mimetype)
-    file = service.files().create(body=file_metadata,
-                                  media_body=media,
-                                  fields='id').execute()
-    print(f'File {filename} uploaded with ID: {file.get("id")}')
+    service.files().update(
+        fileId=file_id,
+        media_body=media
+    ).execute()
+    print(f"[↻] Файл {filename} обновлён по ID: {file_id}")
+
+# def upload_file_to_drive(filename, mimetype='text/csv'):
+#     file_metadata = {
+#         'name': filename,
+#     }
+#     media = MediaFileUpload(filename, mimetype=mimetype)
+#     file = service.files().create(body=file_metadata,
+#                                   media_body=media,
+#                                   fields='id').execute()
+#     print(f'File {filename} uploaded with ID: {file.get("id")}')
 
 def get_prediction_report():
     def get_btc_and_append_csv(filename='btc_data_15m.csv', return_days=7):
@@ -138,7 +146,7 @@ def get_prediction_report():
         updated_df = pd.read_csv(filename, parse_dates=['Timestamp'], index_col='Timestamp')
         cutoff = updated_df.index.max() - pd.Timedelta(days=return_days)
         filtered_df = updated_df[updated_df.index >= cutoff]
-        upload_file_to_drive('btc_data_15m.csv')
+        upload_file_by_id('1ydQ_MmeqGNBvqVNWpMjIA4YXl1J9N6hq','btc_data_15m.csv')
         return filtered_df
 
     class TransformerBinaryClassifier(LightningModule):
@@ -750,9 +758,8 @@ def get_prediction_report():
 
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
 
-
-    upload_file_to_drive('btc_model_predictions.csv')
-    upload_file_to_drive('btc_rl_inference_log_v2.csv')
+    upload_file_by_id('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
+    upload_file_by_id('1KDrXtP56PrfPWSHVanpduvy4y9XUnDPQ', 'btc_rl_inference_log_v2.csv')
 
 
 
