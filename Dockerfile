@@ -1,12 +1,10 @@
-FROM apache/airflow:2.8.1-python3.10
+FROM python:3.10
 
-USER root
-RUN apt-get update && apt-get install -y gcc g++ libgl1-mesa-glx libglib2.0-0
+WORKDIR /app
 
-COPY requirements.txt /requirements.txt
-RUN pip install --upgrade pip && pip install -r /requirements.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-COPY dags/ /opt/airflow/dags/
-COPY inference.py /opt/airflow/
-COPY models/ /opt/airflow/models/
-COPY logs/ /opt/airflow/logs/
+COPY . .
+
+CMD ["python", "inference.py"]
