@@ -73,7 +73,7 @@ def get_prediction_report():
         # Прочитать
         btc_data_15m = pd.read_csv('btc_data_15m.csv')
         # Если файл отсутствует — загружаем 7 дней
-        if not btc_data_15m:
+        if btc_data_15m.empty:
             print("Файл не найден. Загружаем полные 7 дней данных...")
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=seven_days_ago, limit=limit)
             df = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
