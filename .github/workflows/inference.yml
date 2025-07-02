@@ -1,7 +1,7 @@
 name: BTC Inference
 
-on:
-  schedule:
+# on:
+#   schedule:
     # - cron: '2,17,32,47 * * * *'  # Каждые 15 минут с задержкой в 1 минуту
   workflow_dispatch:
 
