@@ -24,17 +24,23 @@ import torch.nn.functional as F
 import os
 import time
 import json
-from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
-service_account_info = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT_JSON'])
-credentials = service_account.Credentials.from_service_account_info(
-    service_account_info, scopes=SCOPES)
+from google.oauth2.credentials import Credentials
 
-service = build('drive', 'v3', credentials=credentials)
+creds_data = json.loads(os.environ['GOOGLE_OAUTH_CREDENTIALS'])
+creds = Credentials(
+    token=creds_data.get("token"),
+    refresh_token=creds_data.get("refresh_token"),
+    token_uri=creds_data.get("token_uri"),
+    client_id=creds_data.get("client_id"),
+    client_secret=creds_data.get("client_secret"),
+    scopes=creds_data.get("scopes"),
+)
+
+service = build('drive', 'v3', credentials=creds)
 
 def download_csv(file_id, local_path='temp.csv'):
     request = service.files().get_media(fileId=file_id)
