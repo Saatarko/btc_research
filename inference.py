@@ -29,7 +29,7 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 
-SCOPES = ['https://www.googleapis.com/auth/drive.file']
+SCOPES = ['https://www.googleapis.com/auth/drive']
 service_account_info = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT_JSON'])
 credentials = service_account.Credentials.from_service_account_info(
     service_account_info, scopes=SCOPES)
