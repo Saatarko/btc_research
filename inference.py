@@ -23,6 +23,39 @@ import gymnasium as gym
 import torch.nn.functional as F
 import os
 import time
+import json
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
+import io
+
+SCOPES = ['https://www.googleapis.com/auth/drive.file']
+service_account_info = json.loads(os.environ['GDRIVE_SERVICE_ACCOUNT_JSON'])
+credentials = service_account.Credentials.from_service_account_info(
+    service_account_info, scopes=SCOPES)
+
+service = build('drive', 'v3', credentials=credentials)
+
+def download_csv(file_id, local_path='temp.csv'):
+    request = service.files().get_media(fileId=file_id)
+    fh = io.FileIO(local_path, 'wb')
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while done is False:
+        status, done = downloader.next_chunk()
+    fh.close()
+    return local_path
+
+
+def upload_file_to_drive(filename, mimetype='text/csv'):
+    file_metadata = {
+        'name': filename,
+    }
+    media = MediaFileUpload(filename, mimetype=mimetype)
+    file = service.files().create(body=file_metadata,
+                                  media_body=media,
+                                  fields='id').execute()
+    print(f'File {filename} uploaded with ID: {file.get("id")}')
 
 def get_prediction_report():
     def get_btc_and_append_csv(filename='btc_data_15m.csv', return_days=7):
@@ -35,8 +68,12 @@ def get_prediction_report():
         now = exchange.milliseconds()
         seven_days_ago = now - 7 * 24 * 60 * 60 * 1000  # 7 days in ms
 
+        download_csv('1ydQ_MmeqGNBvqVNWpMjIA4YXl1J9N6hq', 'btc_data_15m.csv')
+
+        # Прочитать
+        btc_data_15m = pd.read_csv('btc_data_15m.csv')
         # Если файл отсутствует — загружаем 7 дней
-        if not os.path.exists(filename):
+        if not btc_data_15m:
             print("Файл не найден. Загружаем полные 7 дней данных...")
             ohlcv = exchange.fetch_ohlcv(symbol, timeframe=timeframe, since=seven_days_ago, limit=limit)
             df = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
@@ -95,7 +132,7 @@ def get_prediction_report():
         updated_df = pd.read_csv(filename, parse_dates=['Timestamp'], index_col='Timestamp')
         cutoff = updated_df.index.max() - pd.Timedelta(days=return_days)
         filtered_df = updated_df[updated_df.index >= cutoff]
-
+        upload_file_to_drive('btc_data_15m.csv')
         return filtered_df
 
     class TransformerBinaryClassifier(LightningModule):
@@ -660,6 +697,10 @@ def get_prediction_report():
         log_df.at[log_df.index[-1], "real_class"] = real_class
         log_df.to_csv(csv_path, index=False)
 
+    download_csv('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
+    download_csv('1KDrXtP56PrfPWSHVanpduvy4y9XUnDPQ', 'btc_rl_inference_log_v2.csv')
+
+
     update_previous_row(TRANSFORMER_LOG, df_model_rl["Close"].iloc[-1], df_model_rl["Open"].iloc[-1])
     update_previous_row(RL_LOG, df_model_rl["Close"].iloc[-1], df_model_rl["Open"].iloc[-1])
 
@@ -698,7 +739,17 @@ def get_prediction_report():
     rl_df = pd.concat([rl_df, pd.DataFrame([rl_row])], ignore_index=True)
     rl_df.to_csv(RL_LOG, index=False)
 
+
+
+
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
+
+
+    upload_file_to_drive('btc_model_predictions.csv')
+    upload_file_to_drive('btc_rl_inference_log_v2.csv')
+
+
+
 
 if __name__ == '__main__':
     print(get_prediction_report())
