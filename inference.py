@@ -841,8 +841,6 @@ def get_prediction_report():
         except Exception as e:
             print(f"[Ошибка] Не удалось обновить лог: {e}")
 
-        # Загружаем новый файл в Drive
-        upload_csv_to_folder(LOCAL_TEMP_CSV, FOLDER_ID)
 
     new_row = {
         "timestamp": prediction_timestamp,
