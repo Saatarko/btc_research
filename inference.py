@@ -31,6 +31,8 @@ from datetime import datetime
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import glob
 from google.oauth2.credentials import Credentials
+from googleapiclient.errors import HttpError
+import re
 
 creds_data = json.loads(os.environ['GOOGLE_OAUTH_CREDENTIALS'])
 creds = Credentials(
@@ -46,11 +48,46 @@ service = build('drive', 'v3', credentials=creds)
 
 
 
-def get_latest_tail_log(pattern="btc_rl_tail_*.csv"):
-    files = glob.glob(pattern)
-    if not files:
-        raise FileNotFoundError("Не найден ни один лог-файл!")
-    return max(files, key=os.path.getmtime)
+def get_latest_tail_log(service, folder_id="12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK", local_dir="logs", pattern=r"btc_rl_tail_.*\.csv"):
+    # Запрос к Google Drive — получить все csv-файлы с нужной маской в папке
+    query = f"'{folder_id}' in parents and mimeType='text/csv' and name contains 'btc_rl_tail_'"
+    try:
+        results = service.files().list(q=query,
+                                       spaces='drive',
+                                       fields="files(id, name, createdTime)",
+                                       orderBy="createdTime desc").execute()
+        items = results.get('files', [])
+        if not items:
+            raise FileNotFoundError("В указанной папке Google Drive нет файлов с нужной маской.")
+
+        # Найти первый файл, который точно соответствует паттерну
+        for f in items:
+            if re.fullmatch(pattern, f["name"]):
+                file_id = f["id"]
+                file_name = f["name"]
+                break
+        else:
+            raise FileNotFoundError("Нет файла, подходящего под паттерн.")
+
+        # Создать локальную папку, если нет
+        os.makedirs(local_dir, exist_ok=True)
+        local_path = os.path.join(local_dir, file_name)
+
+        # Скачиваем файл
+        request = service.files().get_media(fileId=file_id)
+        fh = io.FileIO(local_path, 'wb')
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+
+        print(f"[✓] Файл скачан локально: {local_path}")
+        return local_path
+
+    except HttpError as e:
+        print(f"Ошибка Google Drive API: {e}")
+        raise
+
 
 def download_csv_old(file_id, local_path='temp.csv'):
     request = service.files().get_media(fileId=file_id)
