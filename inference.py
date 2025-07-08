@@ -830,7 +830,7 @@ def get_prediction_report():
                 df_tail = pd.DataFrame([last_row, new_row_dict])
 
             # Сохраняем новый файл с временным именем
-            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+            timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M")
             temp_log_path = f"btc_rl_tail_{timestamp_str}.csv"
             df_tail.to_csv(temp_log_path, index=False)
             print(f"[✓] Лог обновлён: {temp_log_path}")
