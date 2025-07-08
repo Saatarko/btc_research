@@ -712,11 +712,9 @@ def get_prediction_report():
         log_df.to_csv(csv_path, index=False)
 
     download_csv('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
-    download_csv('1KDrXtP56PrfPWSHVanpduvy4y9XUnDPQ', 'btc_rl_inference_log_v2.csv')
-
-
     update_previous_row(TRANSFORMER_LOG, df_model_rl["Close"].iloc[-1], df_model_rl["Open"].iloc[-1])
-    update_previous_row(RL_LOG, df_model_rl["Close"].iloc[-1], df_model_rl["Open"].iloc[-1])
+
+
 
     # --- Добавление новой строки трансформера ---
     transformer_row = {
@@ -733,36 +731,92 @@ def get_prediction_report():
     pred_df = pd.concat([pred_df, pd.DataFrame([transformer_row])], ignore_index=True)
     pred_df.to_csv(TRANSFORMER_LOG, index=False)
 
-    # --- Добавление новой строки RL ---
-    rl_row = {
+    upload_file_by_id('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
+
+    # === Настройки ===
+    FOLDER_ID = "12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK"
+    TAIL_FILENAME_PREFIX = "btc_rl_tail"
+    LOCAL_TEMP_CSV = "btc_rl_tail_temp.csv"
+
+    # === Функция: получить ID последнего (по времени) файла в папке ===
+    def get_latest_file_id_in_folder(folder_id):
+        query = f"'{folder_id}' in parents and mimeType='text/csv'"
+        results = service.files().list(q=query, orderBy="createdTime desc", pageSize=1).execute()
+        items = results.get("files", [])
+        if not items:
+            return None
+        return items[0]["id"]
+
+    # === Функция: скачать файл по ID ===
+    def download_csv(file_id, local_path):
+        request = service.files().get_media(fileId=file_id)
+        fh = io.FileIO(local_path, "wb")
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        fh.close()
+
+    # === Функция: загрузить файл в папку с новым именем ===
+    def upload_csv_to_folder(local_path, folder_id):
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+        filename = f"{TAIL_FILENAME_PREFIX}_{timestamp}.csv"
+        file_metadata = {
+            "name": filename,
+            "parents": [folder_id]
+        }
+        media = MediaFileUpload(local_path, mimetype="text/csv")
+        file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+        print(f"[↑] Файл загружен: {filename} → ID: {file.get('id')}")
+
+    # === Основная функция: обновить и сохранить двухстрочный лог ===
+    def update_rl_log_tail_to_drive(close_price, open_price, new_row_dict):
+        last_file_id = get_latest_file_id_in_folder(FOLDER_ID)
+
+        if last_file_id:
+            download_csv(last_file_id, LOCAL_TEMP_CSV)
+            df = pd.read_csv(LOCAL_TEMP_CSV, parse_dates=["timestamp"])
+            if df.empty:
+                print("❗ Последний лог пуст.")
+                return
+            last_row = df.iloc[-1].copy()
+        else:
+            # В случае первого запуска
+            last_row = {k: None for k in new_row_dict.keys()}
+            last_row["timestamp"] = datetime.now()
+            print("⚠️ Не найдено предыдущих логов, создаём новый файл.")
+
+        # Обновляем real_price, real_class
+        last_row["real_price"] = close_price
+        last_row["real_class"] = int(close_price > open_price)
+
+        # Объединяем две строки
+        df_tail = pd.DataFrame([last_row, new_row_dict])
+        df_tail.to_csv(LOCAL_TEMP_CSV, index=False)
+
+        # Загружаем новый файл в Drive
+        upload_csv_to_folder(LOCAL_TEMP_CSV, FOLDER_ID)
+
+    new_row = {
         "timestamp": prediction_timestamp,
         "action": int(action),
         "reward": float(reward),
         "done": done,
         "obs": obs_before.tolist(),
         "next_obs": next_obs.tolist(),
-        "real_price": df_model_rl["Close"].iloc[-1],
+        "real_price": None,
         "entry_price": info.get("entry_price", None),
         "unrealized_profit": info.get("unrealized_profit", None),
-        "position_before": info.get("position", 0),  # до step()
+        "position_before": info.get("position", 0),
     }
-    try:
-        rl_df = pd.read_csv(RL_LOG, parse_dates=["timestamp"])
-    except FileNotFoundError:
-        rl_df = pd.DataFrame(columns=rl_row.keys())
-    rl_df = pd.concat([rl_df, pd.DataFrame([rl_row])], ignore_index=True)
-    rl_df.to_csv(RL_LOG, index=False)
 
-
-
+    update_rl_log_tail_to_drive(
+        close_price=df_model_rl["Close"].iloc[-1],
+        open_price=df_model_rl["Open"].iloc[-1],
+        new_row_dict=new_row
+    )
 
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
-
-    upload_file_by_id('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
-    upload_file_by_id('1KDrXtP56PrfPWSHVanpduvy4y9XUnDPQ', 'btc_rl_inference_log_v2.csv')
-
-
-
 
 if __name__ == '__main__':
     print(get_prediction_report())
