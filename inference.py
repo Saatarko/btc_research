@@ -764,29 +764,37 @@ def get_prediction_report():
 
 
     # === Основная функция: обновить и сохранить двухстрочный лог ===
-    def update_rl_log_tail_to_drive(close_price, open_price, new_row_dict):
-        last_file_id = get_latest_file_id_in_folder(FOLDER_ID)
+    def update_rl_log_tail_to_drive(log_path: str, new_row_dict: dict):
+        """
+        Обновляет последний лог-файл, добавляя новую строку рядом с последней.
+        Гарантирует совместимость типов и корректную структуру.
+        """
 
-        if last_file_id:
-            download_csv(last_file_id, LOCAL_TEMP_CSV)
-            df = pd.read_csv(LOCAL_TEMP_CSV, parse_dates=["timestamp"])
-            if df.empty:
-                print("❗ Последний лог пуст.")
-                return
-            last_row = df.iloc[-1].copy()
-        else:
-            # В случае первого запуска
-            last_row = {k: None for k in new_row_dict.keys()}
-            last_row["timestamp"] = datetime.now()
-            print("⚠️ Не найдено предыдущих логов, создаём новый файл.")
+        if not os.path.exists(log_path):
+            print(f"[Ошибка] Файл не найден: {log_path}")
+            return
 
-        # Обновляем real_price, real_class
-        last_row["real_price"] = close_price
-        last_row["real_class"] = int(close_price > open_price)
+        try:
+            rl_df = pd.read_csv(log_path)
 
-        # Объединяем две строки
-        df_tail = pd.DataFrame([last_row, new_row_dict])
-        df_tail.to_csv(LOCAL_TEMP_CSV, index=False)
+            if rl_df.empty:
+                print(f"[Предупреждение] Лог пустой. Добавим только новую строку.")
+                df_tail = pd.DataFrame([new_row_dict])
+            else:
+                last_row = rl_df.iloc[-1]
+
+                # Явное приведение к словарю
+                if isinstance(last_row, pd.Series):
+                    last_row = last_row.to_dict()
+
+                df_tail = pd.DataFrame([last_row, new_row_dict])
+
+            # Перезаписываем файл
+            df_tail.to_csv(log_path, index=False)
+            print(f"[✓] Лог обновлён: {log_path}")
+
+        except Exception as e:
+            print(f"[Ошибка] Не удалось обновить лог: {e}")
 
         # Загружаем новый файл в Drive
         upload_csv_to_folder(LOCAL_TEMP_CSV, FOLDER_ID)
