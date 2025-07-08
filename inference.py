@@ -27,6 +27,8 @@ import json
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
+from datetime import datetime
+from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 
 from google.oauth2.credentials import Credentials
 
@@ -42,7 +44,7 @@ creds = Credentials(
 
 service = build('drive', 'v3', credentials=creds)
 
-def download_csv(file_id, local_path='temp.csv'):
+def download_csv_old(file_id, local_path='temp.csv'):
     request = service.files().get_media(fileId=file_id)
     fh = io.FileIO(local_path, 'wb')
     downloader = MediaIoBaseDownload(fh, request)
@@ -61,15 +63,43 @@ def upload_file_by_id(file_id, filename, mimetype='text/csv'):
     ).execute()
     print(f"[↻] Файл {filename} обновлён по ID: {file_id}")
 
-# def upload_file_to_drive(filename, mimetype='text/csv'):
-#     file_metadata = {
-#         'name': filename,
-#     }
-#     media = MediaFileUpload(filename, mimetype=mimetype)
-#     file = service.files().create(body=file_metadata,
-#                                   media_body=media,
-#                                   fields='id').execute()
-#     print(f'File {filename} uploaded with ID: {file.get("id")}')
+upload_file_by_id('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
+
+# === Настройки ===
+FOLDER_ID = "12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK"
+TAIL_FILENAME_PREFIX = "btc_rl_tail"
+LOCAL_TEMP_CSV = "btc_rl_tail_temp.csv"
+
+# === Функция: получить ID последнего (по времени) файла в папке ===
+def get_latest_file_id_in_folder(folder_id):
+    query = f"'{folder_id}' in parents and mimeType='text/csv'"
+    results = service.files().list(q=query, orderBy="createdTime desc", pageSize=1).execute()
+    items = results.get("files", [])
+    if not items:
+        return None
+    return items[0]["id"]
+
+# === Функция: скачать файл по ID ===
+def download_csv(file_id, local_path):
+    request = service.files().get_media(fileId=file_id)
+    fh = io.FileIO(local_path, "wb")
+    downloader = MediaIoBaseDownload(fh, request)
+    done = False
+    while not done:
+        status, done = downloader.next_chunk()
+    fh.close()
+
+# === Функция: загрузить файл в папку с новым именем ===
+def upload_csv_to_folder(local_path, folder_id):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    filename = f"{TAIL_FILENAME_PREFIX}_{timestamp}.csv"
+    file_metadata = {
+        "name": filename,
+        "parents": [folder_id]
+    }
+    media = MediaFileUpload(local_path, mimetype="text/csv")
+    file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+    print(f"[↑] Файл загружен: {filename} → ID: {file.get('id')}")
 
 def get_prediction_report():
     def get_btc_and_append_csv(filename='btc_data_15m.csv', return_days=7):
@@ -82,7 +112,7 @@ def get_prediction_report():
         now = exchange.milliseconds()
         seven_days_ago = now - 7 * 24 * 60 * 60 * 1000  # 7 days in ms
 
-        download_csv('1ydQ_MmeqGNBvqVNWpMjIA4YXl1J9N6hq', 'btc_data_15m.csv')
+        download_csv_old('1ydQ_MmeqGNBvqVNWpMjIA4YXl1J9N6hq', 'btc_data_15m.csv')
 
         # Прочитать
         btc_data_15m = pd.read_csv('btc_data_15m.csv')
@@ -711,7 +741,7 @@ def get_prediction_report():
         log_df.at[log_df.index[-1], "real_class"] = real_class
         log_df.to_csv(csv_path, index=False)
 
-    download_csv('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
+    download_csv_old('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
     update_previous_row(TRANSFORMER_LOG, df_model_rl["Close"].iloc[-1], df_model_rl["Open"].iloc[-1])
 
 
@@ -731,43 +761,7 @@ def get_prediction_report():
     pred_df = pd.concat([pred_df, pd.DataFrame([transformer_row])], ignore_index=True)
     pred_df.to_csv(TRANSFORMER_LOG, index=False)
 
-    upload_file_by_id('1aca3KCgbVKzAqGrNMRzcI5NClfBM5QYM', 'btc_model_predictions.csv')
 
-    # === Настройки ===
-    FOLDER_ID = "12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK"
-    TAIL_FILENAME_PREFIX = "btc_rl_tail"
-    LOCAL_TEMP_CSV = "btc_rl_tail_temp.csv"
-
-    # === Функция: получить ID последнего (по времени) файла в папке ===
-    def get_latest_file_id_in_folder(folder_id):
-        query = f"'{folder_id}' in parents and mimeType='text/csv'"
-        results = service.files().list(q=query, orderBy="createdTime desc", pageSize=1).execute()
-        items = results.get("files", [])
-        if not items:
-            return None
-        return items[0]["id"]
-
-    # === Функция: скачать файл по ID ===
-    def download_csv(file_id, local_path):
-        request = service.files().get_media(fileId=file_id)
-        fh = io.FileIO(local_path, "wb")
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        fh.close()
-
-    # === Функция: загрузить файл в папку с новым именем ===
-    def upload_csv_to_folder(local_path, folder_id):
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
-        filename = f"{TAIL_FILENAME_PREFIX}_{timestamp}.csv"
-        file_metadata = {
-            "name": filename,
-            "parents": [folder_id]
-        }
-        media = MediaFileUpload(local_path, mimetype="text/csv")
-        file = service.files().create(body=file_metadata, media_body=media, fields="id").execute()
-        print(f"[↑] Файл загружен: {filename} → ID: {file.get('id')}")
 
     # === Основная функция: обновить и сохранить двухстрочный лог ===
     def update_rl_log_tail_to_drive(close_price, open_price, new_row_dict):
