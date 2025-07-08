@@ -810,13 +810,12 @@ def get_prediction_report():
         "entry_price": info.get("entry_price", None),
         "unrealized_profit": info.get("unrealized_profit", None),
         "position_before": info.get("position", 0),
+        "close_price": df_model_rl["Close"].iloc[-1],
+        "open_price": df_model_rl["Open"].iloc[-1],
     }
 
-    update_rl_log_tail_to_drive(
-        close_price=df_model_rl["Close"].iloc[-1],
-        open_price=df_model_rl["Open"].iloc[-1],
-        new_row_dict=new_row
-    )
+    update_rl_log_tail_to_drive(RL_LOG, new_row)
+
 
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
 
