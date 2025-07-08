@@ -29,7 +29,7 @@ from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 from datetime import datetime
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-
+import glob
 from google.oauth2.credentials import Credentials
 
 creds_data = json.loads(os.environ['GOOGLE_OAUTH_CREDENTIALS'])
@@ -43,6 +43,14 @@ creds = Credentials(
 )
 
 service = build('drive', 'v3', credentials=creds)
+
+
+
+def get_latest_tail_log(pattern="btc_rl_tail_*.csv"):
+    files = glob.glob(pattern)
+    if not files:
+        raise FileNotFoundError("Не найден ни один лог-файл!")
+    return max(files, key=os.path.getmtime)
 
 def download_csv_old(file_id, local_path='temp.csv'):
     request = service.files().get_media(fileId=file_id)
@@ -767,7 +775,7 @@ def get_prediction_report():
     def update_rl_log_tail_to_drive(log_path: str, new_row_dict: dict):
         """
         Обновляет последний лог-файл, добавляя новую строку рядом с последней.
-        Гарантирует совместимость типов и корректную структуру.
+        Затем сохраняет в новый файл с текущим временем и загружает на Google Drive.
         """
 
         if not os.path.exists(log_path):
@@ -781,17 +789,17 @@ def get_prediction_report():
                 print(f"[Предупреждение] Лог пустой. Добавим только новую строку.")
                 df_tail = pd.DataFrame([new_row_dict])
             else:
-                last_row = rl_df.iloc[-1]
-
-                # Явное приведение к словарю
-                if isinstance(last_row, pd.Series):
-                    last_row = last_row.to_dict()
-
+                last_row = rl_df.iloc[-1].to_dict()
                 df_tail = pd.DataFrame([last_row, new_row_dict])
 
-            # Перезаписываем файл
-            df_tail.to_csv(log_path, index=False)
-            print(f"[✓] Лог обновлён: {log_path}")
+            # Сохраняем новый файл с временным именем
+            timestamp_str = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M")
+            temp_log_path = f"btc_rl_tail_{timestamp_str}.csv"
+            df_tail.to_csv(temp_log_path, index=False)
+            print(f"[✓] Лог обновлён: {temp_log_path}")
+
+            # Загружаем на Google Drive
+            upload_csv_to_folder(temp_log_path, FOLDER_ID)
 
         except Exception as e:
             print(f"[Ошибка] Не удалось обновить лог: {e}")
@@ -814,7 +822,8 @@ def get_prediction_report():
         "open_price": df_model_rl["Open"].iloc[-1],
     }
 
-    update_rl_log_tail_to_drive(RL_LOG, new_row)
+    latest_log_path = get_latest_tail_log()
+    update_rl_log_tail_to_drive(latest_log_path, new_row)
 
 
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
