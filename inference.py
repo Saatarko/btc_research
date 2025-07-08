@@ -48,7 +48,7 @@ service = build('drive', 'v3', credentials=creds)
 
 
 
-def get_latest_tail_log(service, folder_id="12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK", local_dir="logs", pattern=r"btc_rl_tail_.*\.csv"):
+def get_latest_tail_log(folder_id="12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK", local_dir="logs", pattern=r"btc_rl_tail_.*\.csv"):
     # Запрос к Google Drive — получить все csv-файлы с нужной маской в папке
     query = f"'{folder_id}' in parents and mimeType='text/csv' and name contains 'btc_rl_tail_'"
     try:
