@@ -29,4 +29,5 @@ tiingo
 ccxt
 stable-baselines3
 gymnasium
+lightning
 stable-baselines3[extra]
