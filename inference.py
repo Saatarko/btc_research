@@ -95,7 +95,7 @@ def update_log_json_and_upload(service, new_entry: dict, local_dir=LOCAL_LOG_DIR
     добавляет новую запись (если это предсказание),
     сохраняет и загружает обновлённый файл обратно.
     """
-
+    os.makedirs(local_dir, exist_ok=True)
     local_path = get_latest_tail_log_json(service, folder_id, local_dir)
     log_data = []
 
