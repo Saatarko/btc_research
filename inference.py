@@ -46,6 +46,106 @@ creds = Credentials(
 
 service = build('drive', 'v3', credentials=creds)
 
+LOG_FOLDER_ID = "12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK"
+LOCAL_LOG_DIR = "logs"
+LOG_PATTERN = r"btc_rl_tail_.*\.json"
+
+def get_latest_tail_log_json(service, folder_id=LOG_FOLDER_ID, local_dir=LOCAL_LOG_DIR, pattern=LOG_PATTERN):
+    query = f"'{folder_id}' in parents and mimeType='application/json' and name contains 'btc_rl_tail_'"
+    try:
+        results = service.files().list(q=query,
+                                       spaces='drive',
+                                       fields="files(id, name, createdTime)",
+                                       orderBy="createdTime desc").execute()
+        items = results.get('files', [])
+        if not items:
+            print("Нет json-файлов в папке Google Drive.")
+            return None
+
+        for f in items:
+            if re.fullmatch(pattern, f["name"]):
+                file_id = f["id"]
+                file_name = f["name"]
+                break
+        else:
+            print("Нет файла, подходящего под паттерн.")
+            return None
+
+        os.makedirs(local_dir, exist_ok=True)
+        local_path = os.path.join(local_dir, file_name)
+
+        request = service.files().get_media(fileId=file_id)
+        fh = io.FileIO(local_path, 'wb')
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+
+        print(f"[✓] Json-файл скачан локально: {local_path}")
+        return local_path
+
+    except HttpError as e:
+        print(f"Ошибка Google Drive API: {e}")
+        return None
+
+def update_log_json_and_upload(service, new_entry: dict, local_dir=LOCAL_LOG_DIR, folder_id=LOG_FOLDER_ID):
+    """
+    Загружает последний json лог,
+    обновляет последнюю запись реальными данными (если они есть в new_entry),
+    добавляет новую запись (если это предсказание),
+    сохраняет и загружает обновлённый файл обратно.
+    """
+
+    local_path = get_latest_tail_log_json(service, folder_id, local_dir)
+    log_data = []
+
+    if local_path and os.path.exists(local_path):
+        with open(local_path, "r", encoding="utf-8") as f:
+            try:
+                log_data = json.load(f)
+            except json.JSONDecodeError:
+                print("[!] Ошибка чтения json, лог считается пустым.")
+                log_data = []
+
+    # Если в new_entry есть реальные данные — обновляем последнюю запись
+    real_data_present = new_entry.get("real_price") is not None or new_entry.get("real_class") is not None
+    if real_data_present and log_data:
+        # Обновляем последнюю запись
+        last_entry = log_data[-1]
+        if new_entry.get("real_price") is not None:
+            last_entry["real_price"] = new_entry["real_price"]
+        if new_entry.get("real_class") is not None:
+            last_entry["real_class"] = new_entry["real_class"]
+
+        # Сохраняем изменения в последней записи
+        log_data[-1] = last_entry
+        print("[✓] Обновлена последняя запись реальными данными.")
+
+    # Если это новое предсказание (обычно real_price и real_class пустые)
+    if not real_data_present:
+        # Добавляем новую запись
+        log_data.append(new_entry)
+        print("[✓] Добавлена новая запись с предсказанием.")
+
+    # Сохраняем файл с временным именем
+    timestamp_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    new_file_name = f"btc_rl_tail_{timestamp_str}.json"
+    new_local_path = os.path.join(local_dir, new_file_name)
+
+    with open(new_local_path, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, ensure_ascii=False, indent=2)
+
+    # Загружаем обратно на Google Drive
+    file_metadata = {
+        "name": new_file_name,
+        "parents": [folder_id],
+        "mimeType": "application/json"
+    }
+    media = MediaFileUpload(new_local_path, mimetype="application/json")
+
+    # Можно сделать загрузку файла как создание нового
+    service.files().create(body=file_metadata, media_body=media, fields="id").execute()
+    print(f"[✓] Лог загружен на Google Drive: {new_file_name}")
 
 
 def get_latest_tail_log(folder_id="12WcA1K7_wR8eujJr7aGzMs_GJMfPPpYK", local_dir="logs", pattern=r"btc_rl_tail_.*\.csv"):
@@ -708,7 +808,7 @@ def get_prediction_report():
     SCALER_PATH = "scaler_ttf.save"
     TRANSFORMER_LOG = "btc_model_predictions.csv"
     RL_LOG = "btc_rl_inference_log_v2.csv"
-    RL_MODEL_PATH = "ppo_btc_trading_v11"
+    RL_MODEL_PATH = "ppo_btc_trading_v18"
 
     # --- Загрузка данных и признаков ---
     df_new = get_btc_and_append_csv()
@@ -842,24 +942,54 @@ def get_prediction_report():
             print(f"[Ошибка] Не удалось обновить лог: {e}")
 
 
+    # new_row = {
+    #     "timestamp": prediction_timestamp,
+    #     "action": int(action),
+    #     "reward": float(reward),
+    #     "done": done,
+    #     "obs": obs_before.tolist(),
+    #     "next_obs": next_obs.tolist(),
+    #     "real_price": None,
+    #     "entry_price": info.get("entry_price", None),
+    #     "unrealized_profit": info.get("unrealized_profit", None),
+    #     "position_before": info.get("position", 0),
+    #     "close_price": df_model_rl["Close"].iloc[-1],
+    #     "open_price": df_model_rl["Open"].iloc[-1],
+    # }
+    #
+    # latest_log_path = get_latest_tail_log()
+    # update_rl_log_tail_to_drive(latest_log_path, new_row)
+
     new_row = {
-        "timestamp": prediction_timestamp,
+        "timestamp": prediction_timestamp.isoformat(),  # или строка с датой
         "action": int(action),
         "reward": float(reward),
         "done": done,
         "obs": obs_before.tolist(),
         "next_obs": next_obs.tolist(),
-        "real_price": None,
+        "real_price": None,  # пока нет реальных данных
         "entry_price": info.get("entry_price", None),
         "unrealized_profit": info.get("unrealized_profit", None),
         "position_before": info.get("position", 0),
         "close_price": df_model_rl["Close"].iloc[-1],
         "open_price": df_model_rl["Open"].iloc[-1],
+        "real_class": None
     }
 
-    latest_log_path = get_latest_tail_log()
-    update_rl_log_tail_to_drive(latest_log_path, new_row)
+    # Сохраняем предсказание (без реальных данных)
+    update_log_json_and_upload(service, new_row)
 
+    real_close_price = df_indicators["Close"].iloc[-1]
+    real_open_price = df_indicators["Open"].iloc[-1]
+
+    # Через 15 минут при получении реальных данных:
+    real_update = {
+        "timestamp": new_row["timestamp"],  # точно такой же timestamp, чтобы обновить
+        "real_price": real_close_price,
+        "real_class": int(real_close_price > real_open_price),
+    }
+
+    update_log_json_and_upload(service, real_update)
 
     print(f"[✓] Инференс завершён. Prediction Time: {prediction_timestamp}")
 
