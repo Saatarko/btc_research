@@ -858,7 +858,7 @@ def get_prediction_report():
     state_columns = [col for col in df_model_rl.columns if col not in excluded]
     env = BTCTradingEnv(df_model_rl, state_columns)
     obs, _ = env.reset()
-    rl_model = PPO.load(RL_MODEL_PATH, env=env)
+    rl_model = PPO.load(RL_MODEL_PATH, env=env, custom_objects={"policy_class": TransformerPolicy})
     action, _ = rl_model.predict(obs, deterministic=True)
     obs_before = obs.copy()
     try:
