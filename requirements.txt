@@ -27,7 +27,12 @@ ta
 pandas-datareader
 tiingo
 ccxt
-stable-baselines3
 gymnasium
-lightning
 stable-baselines3[extra]
+lightning
+
+# Google API packages
+google-api-python-client
+google-auth
+google-auth-httplib2
+google-auth-oauthlib
