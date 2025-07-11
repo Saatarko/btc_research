@@ -13,7 +13,6 @@ import numpy as np
 import pandas as pd
 import ta
 import torch
-from lightning.pytorch import LightningModule
 from pykalman import KalmanFilter
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
@@ -25,11 +24,9 @@ import os
 import time
 import json
 from googleapiclient.discovery import build
-from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
 import io
 from datetime import datetime
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-import glob
 from google.oauth2.credentials import Credentials
 from googleapiclient.errors import HttpError
 import re
